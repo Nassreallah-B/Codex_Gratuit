@@ -1,0 +1,247 @@
+# codex-launch.ps1 — Choisis un modele, l'APPLICATION Codex demarre dessus.
+# DeepSeek/NVIDIA/HF (API chat) : MCP coupes auto (incompatibles). OpenAI/Ollama : MCP actifs.
+# Double-clic sur le raccourci "Codex (menu)".
+
+$CONFIG = "$env:USERPROFILE\.codex\config.toml"
+$PROXY = "C:\Serveurs\Codex Gratuit\litellm-codex\start-litellm.ps1"
+$MCPBAK = "C:\Serveurs\Codex Gratuit\mcp-backup.toml"
+$AUMID = "OpenAI.Codex_2p2nqsd0c76g0!App"
+
+# Verifications de base
+if (-not (Test-Path $CONFIG)) {
+  Write-Host "[!] config.toml introuvable : $CONFIG" -ForegroundColor Red
+  Write-Host "    Lance l'app Codex une premiere fois pour le generer." -ForegroundColor Yellow
+  exit 1
+}
+if (-not (Get-Command litellm -ErrorAction SilentlyContinue)) {
+  Write-Host "[!] litellm non installe. Installe-le : uv tool install litellm" -ForegroundColor Red
+  exit 1
+}
+
+function Port-Up([int]$p) {
+  try { $t = New-Object Net.Sockets.TcpClient; $t.Connect('127.0.0.1', $p); $t.Close(); return $true }
+  catch { return $false }
+}
+
+function Ensure-Proxy {
+  if (Port-Up 4000) { Write-Host "[ok] proxy LiteLLM deja allume" -ForegroundColor Green; return }
+  Write-Host "[..] demarrage du proxy LiteLLM..." -ForegroundColor Yellow
+  $proxyDir = Split-Path $PROXY
+  Start-Process pwsh -ArgumentList '-NoExit', '-File', "`"$PROXY`"" -WorkingDirectory $proxyDir -WindowStyle Minimized
+  for ($i = 0; $i -lt 40; $i++) {
+    Start-Sleep -Seconds 1
+    if (Port-Up 4000) { Start-Sleep -Seconds 2; Write-Host "[ok] proxy pret" -ForegroundColor Green; return }
+  }
+  Write-Host "[!] proxy pas pret apres 40s — verifie la fenetre minimisee" -ForegroundColor Red
+}
+
+# Ecrit le modele+provider choisi comme DEFAUT (l'app Codex lit le defaut au demarrage)
+function Set-Default([string]$model, [string]$provider) {
+  $lines = Get-Content $CONFIG
+  for ($i = 0; $i -lt $lines.Count; $i++) {
+    if ($lines[$i] -match '^\s*\[') { break }
+    if ($lines[$i] -match '^\s*model\s*=') { $lines[$i] = "model = `"$model`"" }
+    if ($lines[$i] -match '^\s*model_provider\s*=') { $lines[$i] = "model_provider = `"$provider`"" }
+  }
+  Set-Content -Path $CONFIG -Value $lines -Encoding utf8
+}
+
+# Force model_reasoning_effort="xhigh" a chaque lancement.
+# L'app Codex reecrit parfois "max" (son reglage UI), valeur REFUSEE par codex-cli 0.118+
+# ("unknown variant max, expected ... xhigh") -> 'codex exec' ne demarrait plus.
+function Set-Reasoning {
+  $lines = Get-Content $CONFIG
+  $done = $false
+  for ($i = 0; $i -lt $lines.Count; $i++) {
+    if ($lines[$i] -match '^\s*\[') { break }
+    if ($lines[$i] -match '^\s*model_reasoning_effort\s*=') { $lines[$i] = 'model_reasoning_effort = "xhigh"'; $done = $true }
+  }
+  if (-not $done) { $lines = @('model_reasoning_effort = "xhigh"') + $lines }
+  Set-Content -Path $CONFIG -Value $lines -Encoding utf8
+}
+
+# Coupe les serveurs MCP externes (incompatibles avec les API chat type DeepSeek)
+# IMPORTANT : node_repl est le serveur INTERNE de Codex — on ne le touche JAMAIS.
+function Strip-MCP {
+  $lines = Get-Content $CONFIG
+  $out = New-Object System.Collections.Generic.List[string]
+  $mcp = New-Object System.Collections.Generic.List[string]
+  $inMcp = $false
+  $mcpName = ""
+  foreach ($ln in $lines) {
+    if ($ln -match '^\s*\[mcp_servers\.([^\]]+)\]') { $inMcp = $true; $mcpName = $matches[1] }
+    elseif ($ln -match '^\s*\[' -and $ln -notmatch '^\s*\[mcp_servers\.') { $inMcp = $false; $mcpName = "" }
+    # node_repl (+ node_repl.env) = serveur interne Codex → on le garde dans config
+    if ($inMcp -and $mcpName -notmatch '^node_repl') { $mcp.Add($ln) }
+    else { $out.Add($ln) }
+  }
+  if ($mcp.Count -gt 0) {
+    Set-Content -Path $MCPBAK -Value $mcp -Encoding utf8
+    Set-Content -Path $CONFIG -Value $out -Encoding utf8
+    Write-Host "[ok] $($mcp.Count) lignes MCP externes sauvegardees" -ForegroundColor Yellow
+  }
+}
+
+# Remet les serveurs MCP externes (pour OpenAI/Ollama qui les supportent)
+# IMPORTANT : on ignore node_repl dans la verification — il est toujours present (injecte par Codex).
+function Restore-MCP {
+  # Verifie si des serveurs EXTERNES (hors node_repl) sont deja presents
+  $hasExternal = Get-Content $CONFIG | Select-String '^\s*\[mcp_servers\.(?!node_repl)' -Quiet
+  if ($hasExternal) { Write-Host "[i] MCP externes deja presents" -ForegroundColor DarkYellow; return }
+  if (-not (Test-Path $MCPBAK)) { Write-Host "[!] mcp-backup.toml introuvable" -ForegroundColor Red; return }
+  Add-Content -Path $CONFIG -Value "" -Encoding utf8
+  Add-Content -Path $CONFIG -Value (Get-Content $MCPBAK) -Encoding utf8
+  Write-Host "[ok] MCP externes restaures depuis mcp-backup.toml" -ForegroundColor Green
+}
+
+# Regenere config.yaml : le wildcard '*' route TOUT nom de modele envoye par l'app
+# Codex (gpt-5.5, gpt-5-codex, gpt-5.x a venir...) vers le provider choisi dans le menu.
+# => le menu fait foi, peu importe ce que le selecteur de modele de l'app affiche.
+function Update-LiteLLMConfig([string]$menuModel) {
+  $yamlPath = Join-Path (Split-Path $PROXY) 'config.yaml'
+
+  $wcThink = $false
+  switch ($menuModel) {
+    'deepseek-flash' { $wcModel = 'deepseek/deepseek-v4-flash'; $wcBase = 'https://api.deepseek.com'; $wcKey = 'DEEPSEEK_API_KEY' }
+    'deepseek-pro' { $wcModel = 'deepseek/deepseek-v4-pro'; $wcBase = 'https://api.deepseek.com'; $wcKey = 'DEEPSEEK_API_KEY' }
+    'nvidia-deepseek' { $wcModel = 'nvidia_nim/deepseek-ai/deepseek-v4-pro'; $wcBase = 'https://integrate.api.nvidia.com/v1'; $wcKey = 'NVIDIA_API_KEY_DEEPSEEK'; $wcThink = $true }
+    'nvidia-glm' { $wcModel = 'nvidia_nim/z-ai/glm-5.1'; $wcBase = 'https://integrate.api.nvidia.com/v1'; $wcKey = 'NVIDIA_API_KEY_GLM' }
+    'hf' { $wcModel = 'huggingface/Qwen/Qwen3-Coder-Next'; $wcBase = ''; $wcKey = 'HF_TOKEN' }
+    default { $wcModel = 'deepseek/deepseek-v4-flash'; $wcBase = 'https://api.deepseek.com'; $wcKey = 'DEEPSEEK_API_KEY' }
+  }
+
+  # params du wildcard (api_base optionnel : HF n'en a pas ; extra_body thinking:false pour deepseek-v4-pro NVIDIA)
+  $wc = New-Object System.Collections.Generic.List[string]
+  $wc.Add("      model: $wcModel")
+  if ($wcBase) { $wc.Add("      api_base: $wcBase") }
+  $wc.Add("      api_key: os.environ/$wcKey")
+  $wc.Add("      use_chat_completions_api: true")
+  if ($wcThink) { $wc.Add('      extra_body: {"chat_template_kwargs": {"thinking": false}}') }
+  $wcParams = $wc -join "`n"
+
+  # contextes reels : DeepSeek 1M, NVIDIA/HF 256k — exposes via model_info pour que
+  # Codex les recoive quand il interroge /v1/models (sinon defaut 65536 -> compact 62000).
+  $dsInfo = "      model_info:`n        context_window: 1048576`n        max_context_window: 1048576"
+  $nvInfo = "      model_info:`n        context_window: 262144`n        max_context_window: 262144"
+  $hfInfo = "      model_info:`n        context_window: 262144`n        max_context_window: 262144"
+
+  $yaml = @"
+# LiteLLM proxy — pont API Responses (Codex) -> chat/completions (DeepSeek/NVIDIA/HF)
+# GENERE AUTOMATIQUEMENT par codex-launch.ps1 a chaque lancement — ne pas editer a la main.
+model_list:
+  - model_name: deepseek-flash
+    litellm_params:
+      model: deepseek/deepseek-v4-flash
+      api_base: https://api.deepseek.com
+      api_key: os.environ/DEEPSEEK_API_KEY
+      use_chat_completions_api: true
+$dsInfo
+
+  - model_name: deepseek-pro
+    litellm_params:
+      model: deepseek/deepseek-v4-pro
+      api_base: https://api.deepseek.com
+      api_key: os.environ/DEEPSEEK_API_KEY
+      use_chat_completions_api: true
+$dsInfo
+
+  - model_name: nvidia-deepseek
+    litellm_params:
+      model: nvidia_nim/deepseek-ai/deepseek-v4-pro
+      api_base: https://integrate.api.nvidia.com/v1
+      api_key: os.environ/NVIDIA_API_KEY_DEEPSEEK
+      use_chat_completions_api: true
+      extra_body: {"chat_template_kwargs": {"thinking": false}}
+$nvInfo
+
+  - model_name: nvidia-glm
+    litellm_params:
+      model: nvidia_nim/z-ai/glm-5.1
+      api_base: https://integrate.api.nvidia.com/v1
+      api_key: os.environ/NVIDIA_API_KEY_GLM
+      use_chat_completions_api: true
+$nvInfo
+
+  - model_name: hf
+    litellm_params:
+      model: huggingface/Qwen/Qwen3-Coder-Next
+      api_key: os.environ/HF_TOKEN
+      use_chat_completions_api: true
+$hfInfo
+
+  # catch-all : route vers le provider du menu ($menuModel)
+  - model_name: "*"
+    litellm_params:
+$wcParams
+
+litellm_settings:
+  drop_params: true
+  callbacks: codex_deepseek_fix.handler
+
+general_settings:
+  master_key: sk-codex-local
+"@
+
+  Set-Content -Path $yamlPath -Value $yaml -Encoding utf8
+  Write-Host "[ok] config.yaml regenere : wildcard '*' -> $menuModel" -ForegroundColor Green
+}
+
+# Arrete le proxy LiteLLM (process qui ecoute sur 4000 + sa fenetre pwsh parente)
+function Stop-Proxy {
+  if (-not (Port-Up 4000)) { return }
+  Write-Host "[..] arret du proxy LiteLLM existant (rechargement de config)..." -ForegroundColor Yellow
+  try {
+    $conns = Get-NetTCPConnection -LocalPort 4000 -State Listen -ErrorAction SilentlyContinue
+    foreach ($c in $conns) {
+      $procId = $c.OwningProcess
+      if (-not $procId) { continue }
+      $parent = (Get-CimInstance Win32_Process -Filter "ProcessId=$procId" -ErrorAction SilentlyContinue).ParentProcessId
+      Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+      if ($parent) {
+        $pp = Get-Process -Id $parent -ErrorAction SilentlyContinue
+        if ($pp -and $pp.ProcessName -match 'pwsh|powershell') { Stop-Process -Id $parent -Force -ErrorAction SilentlyContinue }
+      }
+    }
+  }
+  catch { Write-Host "[!] erreur arret proxy: $_" -ForegroundColor Red }
+  for ($i = 0; $i -lt 20; $i++) { if (-not (Port-Up 4000)) { break }; Start-Sleep -Milliseconds 500 }
+}
+
+function Launch-App([string]$model, [string]$provider, [bool]$needProxy, [bool]$withMcp) {
+  Set-Default $model $provider
+  Set-Reasoning   # garantit xhigh a chaque demarrage (l'app reecrit parfois "max", invalide)
+  if ($withMcp) { Restore-MCP; Write-Host "[ok] MCP/memoire ACTIFS" -ForegroundColor Green }
+  else { Strip-MCP; Write-Host "[i] MCP coupes pour cette session (l'API chat ne les supporte pas)" -ForegroundColor DarkYellow }
+  if ($needProxy) {
+    Update-LiteLLMConfig $model   # menu = source de verite : wildcard pointe sur ce provider
+    Stop-Proxy                    # force LiteLLM a recharger la nouvelle config
+    Ensure-Proxy
+  }
+  Write-Host "[go] demarrage de l'application Codex sur '$model'..." -ForegroundColor Cyan
+  Write-Host "    (si l'app etait deja ouverte, ferme-la et relance pour appliquer)" -ForegroundColor DarkGray
+  Start-Process "shell:AppsFolder\$AUMID"
+}
+
+Write-Host ""
+Write-Host "  ===== LANCEUR CODEX =====" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "   1) DeepSeek-V4-flash      rapide, pas cher          [MCP OK]  <- recommande"
+Write-Host "   2) DeepSeek-V4-pro        plus fort (ton compte)   [MCP OK]"
+Write-Host "   3) NVIDIA DeepSeek-V4-pro instable cote NVIDIA      [MCP OK]"
+Write-Host "   4) NVIDIA GLM-5.1         gratuit, rapide          [MCP OK]"
+Write-Host "   5) HuggingFace Qwen3.6    gratuit                  [MCP OK]"
+Write-Host "   6) Mon compte OpenAI      gpt-5-codex              [compte, MCP OK]"
+Write-Host "   7) Ollama cloud           minimax (ollama signin)  [cloud, MCP OK]"
+Write-Host ""
+$c = Read-Host "  Ton choix (1-7)"
+
+switch ($c) {
+  '1' { Launch-App "deepseek-flash"   "litellm"                  $true  $true }
+  '2' { Launch-App "deepseek-pro"     "litellm"                  $true  $true }
+  '3' { Launch-App "nvidia-deepseek"  "litellm"                  $true  $true }
+  '4' { Launch-App "nvidia-glm"       "litellm"                  $true  $true }
+  '5' { Launch-App "hf"               "litellm"                  $true  $true }
+  '6' { Launch-App "gpt-5-codex"      "openai"                   $false $true }
+  '7' { Launch-App "minimax-m3:cloud" "ollama-launch-codex-app"  $false $true }
+  default { Write-Host "Choix invalide. Relance le lanceur." -ForegroundColor Red }
+}

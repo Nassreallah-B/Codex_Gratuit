@@ -1,0 +1,67 @@
+# ============================================
+# Codex Gratuit — .gitignore
+# Sécurisation des secrets et fichiers sensibles
+# ============================================
+
+# ---- Clés API et secrets ----
+.env
+*.env
+litellm-codex/.env
+
+# ---- Backups contenant des tokens/configs sensibles ----
+config.toml.backup-full
+mcp-backup.toml
+
+# ---- Config Codex utilisateur (contient tokens MCP, chemins perso) ----
+# NB: le vrai config.toml est dans ~/.codex/, pas ici,
+#     mais si une copie locale existe, on l'exclut aussi.
+config.toml
+
+# ---- config.yaml litellm : REGENERE a chaque lancement par codex-launch.ps1 ----
+#      (suivre seulement le generateur, pas le fichier genere qui change tout le temps)
+litellm-codex/config.yaml
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# ---- Environnements virtuels ----
+venv/
+.venv/
+env/
+.env.local
+.env.*.local
+
+# ---- Logs ----
+*.log
+litellm_debug.log
+litellm.log
+
+# ---- OS ----
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+._*
+
+# ---- IDE / Editeurs ----
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.settings/
+
+# ---- Raccourcis Windows ----
+*.lnk
