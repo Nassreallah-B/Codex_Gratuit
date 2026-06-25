@@ -33,7 +33,7 @@
       "web_search_tool_type": "text"
     },
     {
-      "slug": "deepseek-pro",
+      "slug": "deepseek-v4-pro",
       "display_name": "DeepSeek V4 Pro (via LiteLLM)",
       "description": "DeepSeek V4 Pro — plus fort, 1M contexte",
       "context_window": 1048576,
