@@ -2,10 +2,22 @@
 # DeepSeek/NVIDIA/HF (API chat) : MCP coupes auto (incompatibles). OpenAI/Ollama : MCP actifs.
 # Double-clic sur le raccourci "Codex (menu)".
 
-$CONFIG = "$env:USERPROFILE\.codex\config.toml"
+# Homes Codex isoles :
+#  - FREE_HOME   = providers gratuits (LiteLLM/DeepSeek/NVIDIA/HF/Ollama) -> gere par CE launcher
+#  - OPENAI_HOME = compte OpenAI par defaut (app desktop standard) -> jamais touche par ce launcher
+$FREE_HOME = "$env:USERPROFILE\.codex-openai"
+$OPENAI_HOME = "$env:USERPROFILE\.codex"
+$CONFIG = "$FREE_HOME\config.toml"
 $PROXY = "C:\Serveurs\Codex Gratuit\litellm-codex\start-litellm.ps1"
 $MCPBAK = "C:\Serveurs\Codex Gratuit\mcp-backup.toml"
 $AUMID = "OpenAI.Codex_2p2nqsd0c76g0!App"
+
+# Bascule le home Codex actif (variable User persistante = lue par l'app Store + la session)
+function Set-CodexHome([string]$path) {
+  [Environment]::SetEnvironmentVariable('CODEX_HOME', $path, 'User')
+  $env:CODEX_HOME = $path
+  Write-Host "[ok] CODEX_HOME -> $path" -ForegroundColor Green
+}
 
 # Verifications de base
 if (-not (Test-Path $CONFIG)) {
@@ -66,7 +78,7 @@ function Set-Reasoning {
 #  - litellm : aucun global -> le catalogue scoped [model_providers.litellm] fait foi.
 # Sans ca, le global ollama-launch-models.json masquait les modeles OpenAI au profit des deepseek/nvidia/hf.
 function Set-Catalog([string]$provider) {
-  $ollamaCat = "$env:USERPROFILE\.codex\ollama-launch-models.json"
+  $ollamaCat = "$FREE_HOME\ollama-launch-models.json"
   $lines = Get-Content $CONFIG
   $out = New-Object System.Collections.Generic.List[string]
   $inHeader = $true
@@ -242,9 +254,19 @@ function Stop-Proxy {
 }
 
 function Launch-App([string]$model, [string]$provider, [bool]$needProxy, [bool]$withMcp) {
+  # --- Compte OpenAI : on bascule sur le home par defaut ~/.codex et on N'Y TOUCHE PAS ---
+  if ($provider -eq 'openai') {
+    Set-CodexHome $OPENAI_HOME
+    Write-Host "[go] Codex sur ton COMPTE OpenAI (home ~/.codex, config intacte)..." -ForegroundColor Cyan
+    Write-Host "    (ferme l'app si elle etait ouverte, puis relance pour appliquer le home)" -ForegroundColor DarkGray
+    Start-Process "shell:AppsFolder\$AUMID"
+    return
+  }
+  # --- Providers gratuits : home dedie ~/.codex-openai (gere uniquement ici) ---
+  Set-CodexHome $FREE_HOME
   Set-Default $model $provider
   Set-Reasoning   # garantit xhigh a chaque demarrage (l'app reecrit parfois "max", invalide)
-  Set-Catalog $provider   # catalogue: openai=natif, ollama=ollama-launch-models.json, litellm=scoped
+  Set-Catalog $provider   # catalogue: ollama=ollama-launch-models.json, litellm=scoped
   if ($withMcp) { Restore-MCP; Write-Host "[ok] MCP/memoire ACTIFS" -ForegroundColor Green }
   else { Strip-MCP; Write-Host "[i] MCP coupes pour cette session (l'API chat ne les supporte pas)" -ForegroundColor DarkYellow }
   if ($needProxy) {
@@ -252,7 +274,7 @@ function Launch-App([string]$model, [string]$provider, [bool]$needProxy, [bool]$
     Stop-Proxy                    # force LiteLLM a recharger la nouvelle config
     Ensure-Proxy
   }
-  Write-Host "[go] demarrage de l'application Codex sur '$model'..." -ForegroundColor Cyan
+  Write-Host "[go] demarrage de l'application Codex (GRATUIT) sur '$model'..." -ForegroundColor Cyan
   Write-Host "    (si l'app etait deja ouverte, ferme-la et relance pour appliquer)" -ForegroundColor DarkGray
   Start-Process "shell:AppsFolder\$AUMID"
 }
@@ -265,18 +287,18 @@ Write-Host "   2) DeepSeek-V4-pro        plus fort (ton compte)   [MCP OK]"
 Write-Host "   3) NVIDIA DeepSeek-V4-pro instable cote NVIDIA      [MCP OK]"
 Write-Host "   4) NVIDIA GLM-5.1         gratuit, rapide          [MCP OK]"
 Write-Host "   5) HuggingFace Qwen3.6    gratuit                  [MCP OK]"
-Write-Host "   6) Mon compte OpenAI      gpt-5-codex              [compte, MCP OK]"
-Write-Host "   7) Ollama cloud           minimax (ollama signin)  [cloud, MCP OK]"
+Write-Host "   6) Mon compte OpenAI      gpt-5.5 (home ~/.codex)   [compte, MCP OK]"
+Write-Host "   7) Ollama cloud           minimax (ollama signin)  [cloud]"
 Write-Host ""
 $c = Read-Host "  Ton choix (1-7)"
 
 switch ($c) {
-  '1' { Launch-App "deepseek-flash"   "litellm"                  $true  $true }
-  '2' { Launch-App "deepseek-v4-pro"     "litellm"                  $true  $true }
-  '3' { Launch-App "nvidia-deepseek"  "litellm"                  $true  $true }
-  '4' { Launch-App "nvidia-glm"       "litellm"                  $true  $true }
-  '5' { Launch-App "hf"               "litellm"                  $true  $true }
-  '6' { Launch-App "gpt-5-codex"      "openai"                   $false $true }
-  '7' { Launch-App "minimax-m3:cloud" "ollama-launch-codex-app"  $false $true }
+  '1' { Launch-App "deepseek-flash"   "litellm"                  $true  $false }
+  '2' { Launch-App "deepseek-v4-pro"  "litellm"                  $true  $false }
+  '3' { Launch-App "nvidia-deepseek"  "litellm"                  $true  $false }
+  '4' { Launch-App "nvidia-glm"       "litellm"                  $true  $false }
+  '5' { Launch-App "hf"               "litellm"                  $true  $false }
+  '6' { Launch-App "gpt-5.5"          "openai"                   $false $true  }
+  '7' { Launch-App "minimax-m3:cloud" "ollama-launch-codex-app"  $false $false }
   default { Write-Host "Choix invalide. Relance le lanceur." -ForegroundColor Red }
 }
