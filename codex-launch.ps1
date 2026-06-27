@@ -60,6 +60,36 @@ function Set-Reasoning {
   Set-Content -Path $CONFIG -Value $lines -Encoding utf8
 }
 
+# Gere le catalogue de modeles GLOBAL (top-level model_catalog_json).
+#  - openai  : AUCUN catalogue global -> l'app Codex affiche ses VRAIS modeles OpenAI (gpt-5.5, gpt-5-codex...).
+#  - ollama  : catalogue global = ollama-launch-models.json (modeles ollama cloud).
+#  - litellm : aucun global -> le catalogue scoped [model_providers.litellm] fait foi.
+# Sans ca, le global ollama-launch-models.json masquait les modeles OpenAI au profit des deepseek/nvidia/hf.
+function Set-Catalog([string]$provider) {
+  $ollamaCat = "$env:USERPROFILE\.codex\ollama-launch-models.json"
+  $lines = Get-Content $CONFIG
+  $out = New-Object System.Collections.Generic.List[string]
+  $inHeader = $true
+  foreach ($ln in $lines) {
+    if ($ln -match '^\s*\[') { $inHeader = $false }
+    if ($inHeader -and $ln -match '^\s*model_catalog_json\s*=') { continue }  # retire tout catalogue global existant
+    $out.Add($ln)
+  }
+  if ($provider -eq 'ollama-launch-codex-app') {
+    $final = New-Object System.Collections.Generic.List[string]
+    $added = $false
+    foreach ($ln in $out) {
+      $final.Add($ln)
+      if (-not $added -and $ln -match '^\s*model_provider\s*=') {
+        $final.Add("model_catalog_json = '$ollamaCat'")   # chaine litterale TOML : pas d'echappement
+        $added = $true
+      }
+    }
+    $out = $final
+  }
+  Set-Content -Path $CONFIG -Value $out -Encoding utf8
+}
+
 # Coupe les serveurs MCP externes (incompatibles avec les API chat type DeepSeek)
 # IMPORTANT : node_repl est le serveur INTERNE de Codex — on ne le touche JAMAIS.
 function Strip-MCP {
@@ -214,6 +244,7 @@ function Stop-Proxy {
 function Launch-App([string]$model, [string]$provider, [bool]$needProxy, [bool]$withMcp) {
   Set-Default $model $provider
   Set-Reasoning   # garantit xhigh a chaque demarrage (l'app reecrit parfois "max", invalide)
+  Set-Catalog $provider   # catalogue: openai=natif, ollama=ollama-launch-models.json, litellm=scoped
   if ($withMcp) { Restore-MCP; Write-Host "[ok] MCP/memoire ACTIFS" -ForegroundColor Green }
   else { Strip-MCP; Write-Host "[i] MCP coupes pour cette session (l'API chat ne les supporte pas)" -ForegroundColor DarkYellow }
   if ($needProxy) {
