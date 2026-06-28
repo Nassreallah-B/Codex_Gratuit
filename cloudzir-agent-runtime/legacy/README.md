@@ -219,31 +219,6 @@ L'installeur copie les commandes vers `~/.claude/commands/`, le moteur `cx-free.
 
 Le dossier [`user/.codex/agents/`](user/.codex/agents/) contient **15 sous-agents spécialisés** pour Codex CLI (multi-agents), taillés pour une stack Node/Express + React/Vike + Supabase/Postgres + Vercel + LLM : `codebase-explorer`, `code-reviewer`, `security-auditor`, `debugger`, `test-engineer`, `db-migration-reviewer`, `performance-optimizer`, `refactorer`, `ai-llm-engineer`, `frontend-ux-reviewer`, `deployment-release-engineer`, `backend-api-reviewer`, `compliance-rgpd-auditor`, `integration-resilience-reviewer`, `docs-changelog-maintainer`.
 
----
-
-## 🧱 Version industrialisée — CloudZIR Agent Runtime
-
-Le dossier [`cloudzir-agent-runtime/`](cloudzir-agent-runtime/) contient une duplication renforcée du projet pour évoluer vers un runtime portable CloudZIR.AI :
-
-- CLI Python cross-platform `cloudzir-agent`
-- génération de `config.yaml` LiteLLM sans chemins Windows hardcodés
-- `.env` local avec master key générée au lieu d'une clé fixe
-- commande `doctor` pour auditer l'environnement
-- commandes Codex `review`, `critique`, `task` en mode dry-run ou exécution
-- callback tool-order testé pour compatibilité DeepSeek
-- tests unitaires `pytest`
-
-Démarrage rapide :
-
-```bash
-cd cloudzir-agent-runtime
-python -m venv .venv
-. .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -e . pytest
-cloudzir-agent init --provider deepseek-flash
-cloudzir-agent doctor
-```
-
 Chaque agent déclare un `sandbox_mode` (`read-only` pour les relecteurs/auditeurs, `workspace-write` pour les 4 « doers » : debugger, test-engineer, refactorer, docs-changelog-maintainer). Copie les `*.toml` dans `~/.codex/agents/` et active `multi_agent = true` sous `[features]` dans `config.toml`. Détails : [user/.codex/agents/README.md](user/.codex/agents/README.md).
 
 ---

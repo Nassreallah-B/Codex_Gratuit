@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cloudzir-agent-runtime"
+version = "0.1.0"
+description = "Runtime portable multi-provider pour Codex, LiteLLM et agents CloudZIR.AI"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "CloudZIR" }]
+license = { text = "Proprietary" }
+keywords = ["codex", "litellm", "agents", "cloudzir", "deepseek", "nvidia", "huggingface"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+
+[project.scripts]
+cloudzir-agent = "cloudzir_agent_runtime.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+cloudzir_agent_runtime = ["py.typed"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q"
