@@ -78,12 +78,39 @@ function Set-Reasoning {
   Set-Content -Path $CONFIG -Value $lines -Encoding utf8
 }
 
+# Ecrit/actualise model_catalog_json DANS la section [model_providers.litellm] (catalogue scoped).
+# IMPORTANT : chaine litterale TOML a quotes simples — un chemin Windows dans une basic string
+# a quotes doubles non echappee ("C:\Serveurs\...") = TOML invalide (\S, \l...) = config illisible.
+function Set-LiteLLMScopedCatalog {
+  $catalog = $LITELLM_CATALOG
+  $lines = Get-Content $CONFIG
+  $out = New-Object System.Collections.Generic.List[string]
+  $inLite = $false
+  $done = $false
+  foreach ($ln in $lines) {
+    if ($ln -match '^\s*\[model_providers\.litellm\]') { $inLite = $true; $done = $false; $out.Add($ln); continue }
+    if ($inLite -and $ln -match '^\s*\[') {
+      if (-not $done) { $out.Add("model_catalog_json = '$catalog'") }
+      $inLite = $false
+    }
+    if ($inLite -and $ln -match '^\s*model_catalog_json\s*=') {
+      $out.Add("model_catalog_json = '$catalog'")
+      $done = $true
+      continue
+    }
+    $out.Add($ln)
+  }
+  if ($inLite -and -not $done) { $out.Add("model_catalog_json = '$catalog'") }
+  Set-Content -Path $CONFIG -Value $out -Encoding utf8
+}
+
 # Gere le catalogue de modeles GLOBAL (top-level model_catalog_json).
 #  - openai  : AUCUN catalogue global -> l'app Codex affiche ses VRAIS modeles OpenAI (gpt-5.5, gpt-5-codex...).
 #  - ollama  : catalogue global = ollama-launch-models.json (modeles ollama cloud).
 #  - litellm : aucun global -> le catalogue scoped [model_providers.litellm] fait foi.
 # Sans ca, le global ollama-launch-models.json masquait les modeles OpenAI au profit des deepseek/nvidia/hf.
 function Set-Catalog([string]$provider) {
+  if ($provider -eq 'litellm') { Set-LiteLLMScopedCatalog }
   $ollamaCat = "$FREE_HOME\ollama-launch-models.json"
   $lines = Get-Content $CONFIG
   $out = New-Object System.Collections.Generic.List[string]
