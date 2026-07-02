@@ -14,6 +14,8 @@ reasoning) est deplace APRES les resultats. Transformation stable et sans perte 
     ... -> function_call, function_call, function_call_output, function_call_output, message, ...
 Inoffensif pour NVIDIA/HF (sequence reste valide), donc applique a tous les backends.
 """
+import sys
+
 from litellm.integrations.custom_logger import CustomLogger
 
 
@@ -73,8 +75,9 @@ class CodexDeepseekFix(CustomLogger):
                 _item_type(x) == "function_call" for x in items
             ):
                 data["input"] = reorder_tool_calls(items)
-        except Exception:
-            pass  # ne jamais casser la requete a cause du fix
+        except Exception as e:
+            # ne jamais casser la requete a cause du fix — mais ne plus echouer en silence
+            print(f"[codex_deepseek_fix] reorder ignore (requete inchangee): {e!r}", file=sys.stderr)
         return data
 
 

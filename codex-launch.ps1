@@ -29,6 +29,10 @@ if (-not (Get-Command litellm -ErrorAction SilentlyContinue)) {
   Write-Host "[!] litellm non installe. Installe-le : uv tool install litellm" -ForegroundColor Red
   exit 1
 }
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+  Write-Host "[!] node non installe (requis pour le pont 4001). Installe Node.js." -ForegroundColor Red
+  exit 1
+}
 
 function Port-Up([int]$p) {
   try { $t = New-Object Net.Sockets.TcpClient; $t.Connect('127.0.0.1', $p); $t.Close(); return $true }
@@ -36,13 +40,13 @@ function Port-Up([int]$p) {
 }
 
 function Ensure-Proxy {
-  if (Port-Up 4000) { Write-Host "[ok] proxy LiteLLM deja allume" -ForegroundColor Green; return }
-  Write-Host "[..] demarrage du proxy LiteLLM..." -ForegroundColor Yellow
+  if ((Port-Up 4000) -and (Port-Up 4001)) { Write-Host "[ok] proxy LiteLLM + pont 4001 deja allumes" -ForegroundColor Green; return }
+  Write-Host "[..] demarrage du proxy LiteLLM + pont 4001..." -ForegroundColor Yellow
   $proxyDir = Split-Path $PROXY
   Start-Process pwsh -ArgumentList '-NoExit', '-File', "`"$PROXY`"" -WorkingDirectory $proxyDir -WindowStyle Minimized
   for ($i = 0; $i -lt 40; $i++) {
     Start-Sleep -Seconds 1
-    if (Port-Up 4000) { Start-Sleep -Seconds 2; Write-Host "[ok] proxy pret" -ForegroundColor Green; return }
+    if ((Port-Up 4000) -and (Port-Up 4001)) { Start-Sleep -Seconds 2; Write-Host "[ok] proxy pret (4000 + 4001)" -ForegroundColor Green; return }
   }
   Write-Host "[!] proxy pas pret apres 40s — verifie la fenetre minimisee" -ForegroundColor Red
 }
@@ -232,25 +236,31 @@ general_settings:
   Write-Host "[ok] config.yaml regenere : wildcard '*' -> $menuModel" -ForegroundColor Green
 }
 
-# Arrete le proxy LiteLLM (process qui ecoute sur 4000 + sa fenetre pwsh parente)
+# Arrete la stack proxy : LiteLLM (4000, + sa fenetre pwsh parente) et le pont Node (4001)
 function Stop-Proxy {
-  if (-not (Port-Up 4000)) { return }
-  Write-Host "[..] arret du proxy LiteLLM existant (rechargement de config)..." -ForegroundColor Yellow
-  try {
-    $conns = Get-NetTCPConnection -LocalPort 4000 -State Listen -ErrorAction SilentlyContinue
-    foreach ($c in $conns) {
-      $procId = $c.OwningProcess
-      if (-not $procId) { continue }
-      $parent = (Get-CimInstance Win32_Process -Filter "ProcessId=$procId" -ErrorAction SilentlyContinue).ParentProcessId
-      Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
-      if ($parent) {
-        $pp = Get-Process -Id $parent -ErrorAction SilentlyContinue
-        if ($pp -and $pp.ProcessName -match 'pwsh|powershell') { Stop-Process -Id $parent -Force -ErrorAction SilentlyContinue }
+  if (-not ((Port-Up 4000) -or (Port-Up 4001))) { return }
+  Write-Host "[..] arret du proxy existant (rechargement de config)..." -ForegroundColor Yellow
+  foreach ($port in 4000, 4001) {
+    try {
+      $conns = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+      foreach ($c in $conns) {
+        $procId = $c.OwningProcess
+        if (-not $procId -or $procId -eq $PID) { continue }
+        # la fenetre pwsh parente n'est tuee que pour LiteLLM (4000) ; le pont node (4001) n'en a pas
+        $parent = $null
+        if ($port -eq 4000) {
+          $parent = (Get-CimInstance Win32_Process -Filter "ProcessId=$procId" -ErrorAction SilentlyContinue).ParentProcessId
+        }
+        Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+        if ($parent -and $parent -ne $PID) {
+          $pp = Get-Process -Id $parent -ErrorAction SilentlyContinue
+          if ($pp -and $pp.ProcessName -match 'pwsh|powershell') { Stop-Process -Id $parent -Force -ErrorAction SilentlyContinue }
+        }
       }
     }
+    catch { Write-Host "[!] erreur arret proxy (port $port): $_" -ForegroundColor Red }
   }
-  catch { Write-Host "[!] erreur arret proxy: $_" -ForegroundColor Red }
-  for ($i = 0; $i -lt 20; $i++) { if (-not (Port-Up 4000)) { break }; Start-Sleep -Milliseconds 500 }
+  for ($i = 0; $i -lt 20; $i++) { if (-not ((Port-Up 4000) -or (Port-Up 4001))) { break }; Start-Sleep -Milliseconds 500 }
 }
 
 function Launch-App([string]$model, [string]$provider, [bool]$needProxy, [bool]$withMcp) {
