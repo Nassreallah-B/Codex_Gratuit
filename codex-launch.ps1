@@ -1,5 +1,6 @@
 # codex-launch.ps1 — Choisis un modele, l'APPLICATION Codex demarre dessus.
-# DeepSeek/NVIDIA/HF (API chat) : MCP coupes auto (incompatibles). OpenAI/Ollama : MCP actifs.
+# DeepSeek/NVIDIA/HF/OpenAI/Ollama : MCP externes conserves — Codex les gere cote app,
+# le callback codex_deepseek_fix reordonne les tool_calls pour DeepSeek (valide 2026-07-02).
 # Double-clic sur le raccourci "Codex (menu)".
 
 # Homes Codex isoles :
@@ -334,12 +335,12 @@ Write-Host ""
 $c = Read-Host "  Ton choix (1-7)"
 
 switch ($c) {
-  '1' { Launch-App "deepseek-flash"   "litellm"                  $true  $false }
-  '2' { Launch-App "deepseek-v4-pro"  "litellm"                  $true  $false }
-  '3' { Launch-App "nvidia-deepseek"  "litellm"                  $true  $false }
-  '4' { Launch-App "nvidia-glm"       "litellm"                  $true  $false }
-  '5' { Launch-App "hf"               "litellm"                  $true  $false }
+  '1' { Launch-App "deepseek-flash"   "litellm"                  $true  $true  }
+  '2' { Launch-App "deepseek-v4-pro"  "litellm"                  $true  $true  }
+  '3' { Launch-App "nvidia-deepseek"  "litellm"                  $true  $true  }
+  '4' { Launch-App "nvidia-glm"       "litellm"                  $true  $true  }
+  '5' { Launch-App "hf"               "litellm"                  $true  $true  }
   '6' { Launch-App "gpt-5.5"          "openai"                   $false $true  }
-  '7' { Launch-App "minimax-m3:cloud" "ollama-launch-codex-app"  $false $false }
+  '7' { Launch-App "minimax-m3:cloud" "ollama-launch-codex-app"  $false $true  }
   default { Write-Host "Choix invalide. Relance le lanceur." -ForegroundColor Red }
 }
