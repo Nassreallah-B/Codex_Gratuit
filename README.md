@@ -128,7 +128,14 @@ Choisis un numéro → le lanceur :
 │              (pense parler à OpenAI)                         │
 │         envoie ses requêtes en API "Responses"               │
 └──────────────────────┬──────────────────────────────────────┘
-                       │ http://localhost:4000/v1/
+                       │ http://127.0.0.1:4001/v1/
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│           Pont Node (:4001) — codex-litellm-proxy.js         │
+│   Corrige GET /v1/models : {"data":[...]} → {"models":[...]} │
+│   (format attendu par Codex) puis forwarde tout vers :4000   │
+└──────────────────────┬──────────────────────────────────────┘
+                       │ http://127.0.0.1:4000
                        ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                   LiteLLM Proxy (:4000)                      │
@@ -234,12 +241,13 @@ C:\Serveurs\Codex Gratuit\
 ├── config.toml.md            # Doc : structure de ~/.codex/config.toml (sans secrets)
 ├── ollama-launch-models.json.md  # Doc : structure de ollama-launch-models.json (sans secrets)
 │
-├── litellm-codex/            # Proxy LiteLLM
-│   ├── start-litellm.ps1     # Démarre le proxy (charge .env, lance litellm)
+├── litellm-codex/            # Stack proxy (pont Node 4001 + LiteLLM 4000)
+│   ├── start-litellm.ps1     # Démarre la stack : valide .env, lance le pont 4001 puis litellm 4000
+│   ├── codex-litellm-proxy.js # Pont Node :4001 → :4000 (fix /v1/models pour Codex)
 │   ├── config.yaml           # Config LiteLLM (GÉNÉRÉ AUTO par codex-launch.ps1 — ne pas éditer)
 │   ├── codex_deepseek_fix.py # Callback : réordonne les tool_calls pour DeepSeek
 │   ├── litellm-models.json   # Catalogue léger exposé à Codex (context_window réels)
-│   ├── .env                  # 🔒 Clés API (NE JAMAIS COMMITTER)
+│   ├── .env                  # 🔒 Clés API — copie CANONIQUE unique (NE JAMAIS COMMITTER)
 │   └── .env.example          # Template sans secrets
 │
 ├── Claude_Commandes/         # Pont Claude Code → Codex gratuit (slash-commandes /cx-free-*)
@@ -317,21 +325,26 @@ Une mise à jour de l'application Codex peut **écraser** `config.toml` et `olla
 Si le contexte retombe à **65 536 tokens** au lieu de 1M/256k :
 
 - Vérifie `C:\Users\<user>\.codex\ollama-launch-models.json`
-- Les slugs `deepseek-flash`, `deepseek-pro`, `nvidia-deepseek`, `nvidia-glm`, `hf` doivent exister avec le bon `context_window`
+- Les slugs `deepseek-flash`, `deepseek-v4-pro`, `nvidia-deepseek`, `nvidia-glm`, `hf` doivent exister avec le bon `context_window` (1M / 1M / 1M / 200k / 256k)
 - Référence : [ollama-launch-models.json.md](ollama-launch-models.json.md)
 
 ### 2. Fournisseur LiteLLM
 
-Vérifie que `C:\Users\<user>\.codex\config.toml` contient :
+Vérifie que `C:\Users\<user>\.codex-openai\config.toml` (home GRATUIT) contient :
 
 ```toml
 [model_providers.litellm]
 name = "LiteLLM"
-base_url = "http://localhost:4000/v1/"
+base_url = "http://127.0.0.1:4001/v1/"
 wire_api = "responses"
 env_key = "LITELLM_KEY"
-model_catalog_json = "C:\\Serveurs\\Codex Gratuit\\litellm-codex\\litellm-models.json"
+model_catalog_json = 'C:\Serveurs\Codex Gratuit\litellm-codex\litellm-models.json'
 ```
+
+> ⚠️ `base_url` pointe sur **4001** (le pont Node), pas 4000 (LiteLLM) — sans le pont, l'app
+> reçoit `{"data":[...]}` sur `/v1/models` et ignore les modèles. Le lanceur réécrit
+> `model_catalog_json` (chaîne littérale TOML à quotes **simples** — des quotes doubles sans
+> `\\` échappés rendraient le TOML invalide et Codex ne verrait plus le provider).
 
 ### 3. Modèle actif (écrit par le lanceur)
 
@@ -347,11 +360,11 @@ Les noms de modèles valides (qui doivent matcher le `model_list` de `config.yam
 | Choix menu | `model` écrit | `model_provider` |
 |------------|---------------|------------------|
 | 1 | `deepseek-flash` | `litellm` |
-| 2 | `deepseek-pro` | `litellm` |
+| 2 | `deepseek-v4-pro` | `litellm` |
 | 3 | `nvidia-deepseek` | `litellm` |
 | 4 | `nvidia-glm` | `litellm` |
 | 5 | `hf` | `litellm` |
-| 6 | `gpt-5-codex` | `openai` |
+| 6 | `gpt-5.5` | `openai` |
 | 7 | `minimax-m3:cloud` | `ollama-launch-codex-app` |
 
 ### 4. Serveurs MCP
@@ -378,12 +391,17 @@ Référence complète : [config.toml.md](config.toml.md)
 # Vérifie que litellm est installé
 litellm --version
 
-# Vérifie que le port 4000 n'est pas déjà utilisé
-Get-NetTCPConnection -LocalPort 4000 -ErrorAction SilentlyContinue
+# Vérifie que les ports 4000 (LiteLLM) et 4001 (pont Node) écoutent
+Get-NetTCPConnection -LocalPort 4000,4001 -State Listen -ErrorAction SilentlyContinue
 
 # Lance manuellement pour voir les erreurs
 pwsh -File "C:\Serveurs\Codex Gratuit\litellm-codex\start-litellm.ps1"
 ```
+
+> `start-litellm.ps1` refuse de démarrer si une clé référencée par `config.yaml` est absente
+> de `.env` (message `[!] cles manquantes ou vides`) — remplis la clé et relance.
+> ⚠️ Toujours lancer via **pwsh 7** (les raccourcis le font) — jamais `powershell.exe` 5.1,
+> qui écrirait un BOM UTF-8 dans `config.toml` à la prochaine réécriture.
 
 ### L'app Codex ne répond pas avec DeepSeek
 
@@ -419,7 +437,12 @@ model_reasoning_effort = "xhigh"   # et non "max"
 ## 🔒 Sécurité
 
 - Le fichier `.env` contient tes clés API — il est exclu de Git via `.gitignore`
-- Le proxy tourne en **local uniquement** (`localhost:4000`) — pas accessible depuis l'extérieur
+- **Copie canonique unique** : `C:\Serveurs\Codex Gratuit\litellm-codex\.env`. Les copies des
+  anciens dossiers (`Codex Free`, `Codex_Gratuit-codex-evaluer-le-projet`) ont été supprimées
+  le 2026-07-02 ; leurs raccourcis pointent désormais sur ce repo.
+- Audit historique git (2026-07-02) : scan des 3 repos (`sk-…`, `nvapi-…`, `hf_…`) — aucun
+  `.env` réel jamais commité, placeholders uniquement. Aucune purge nécessaire.
+- La stack tourne en **local uniquement** (`127.0.0.1:4000` + `127.0.0.1:4001`) — pas accessible depuis l'extérieur
 - La `master_key` du proxy (`sk-codex-local`) est uniquement pour l'accès local
 
 > **Ne committe jamais `.env`** — utilise `.env.example` comme template pour les autres utilisateurs.
