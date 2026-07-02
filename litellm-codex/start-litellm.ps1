@@ -54,4 +54,4 @@ Write-Host "[ok] pont Codex->LiteLLM actif sur 4001"
 # Lance le proxy sur le port 4000
 # IMPORTANT : Set-Location pour que Python trouve codex_deepseek_fix.py via le CWD
 Set-Location -Path $dir
-litellm --config "$dir\config.yaml" --port 4000
+litellm --config "$dir\config.yaml" --host 127.0.0.1 --port 4000

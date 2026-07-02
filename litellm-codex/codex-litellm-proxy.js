@@ -46,6 +46,6 @@ const server = http.createServer((req, res) => {
   req.pipe(proxy);
 });
 
-server.listen(PROXY_PORT, () => {
+server.listen(PROXY_PORT, '127.0.0.1', () => {
   console.log('codex-litellm-proxy: :' + LITELLM_PORT + ' → :' + PROXY_PORT + ' (models fix)');
 });
