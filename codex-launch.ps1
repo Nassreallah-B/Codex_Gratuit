@@ -8,8 +8,10 @@
 $FREE_HOME = "$env:USERPROFILE\.codex-openai"
 $OPENAI_HOME = "$env:USERPROFILE\.codex"
 $CONFIG = "$FREE_HOME\config.toml"
-$PROXY = "C:\Serveurs\Codex Gratuit\litellm-codex\start-litellm.ps1"
-$MCPBAK = "C:\Serveurs\Codex Gratuit\mcp-backup.toml"
+$SCRIPT_ROOT = $PSScriptRoot   # repo deplacable : tous les chemins derivent de l'emplacement du script
+$PROXY = Join-Path $SCRIPT_ROOT "litellm-codex\start-litellm.ps1"
+$MCPBAK = Join-Path $SCRIPT_ROOT "mcp-backup.toml"
+$LITELLM_CATALOG = Join-Path $SCRIPT_ROOT "litellm-codex\litellm-models.json"
 $AUMID = "OpenAI.Codex_2p2nqsd0c76g0!App"
 
 # Bascule le home Codex actif (variable User persistante = lue par l'app Store + la session)
