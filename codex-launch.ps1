@@ -22,6 +22,23 @@ function Set-CodexHome([string]$path) {
   Write-Host "[ok] CODEX_HOME -> $path" -ForegroundColor Green
 }
 
+# Ferme l'app Codex si elle tourne deja : elle ne lit CODEX_HOME qu'a SON demarrage —
+# sinon Start-Process ne fait que refocaliser l'instance ouverte (qui reste sur l'ancien home).
+# Filtre sur le chemin du package Store (OpenAI.Codex) pour ne PAS tuer le CLI 'codex' (codex exec).
+function Close-CodexApp {
+  $procs = Get-Process Codex -ErrorAction SilentlyContinue | Where-Object { $_.Path -match 'OpenAI\.Codex' }
+  if (-not $procs) { return }
+  Write-Host "[..] app Codex deja ouverte — fermeture pour appliquer le home..." -ForegroundColor Yellow
+  $procs | Where-Object { $_.MainWindowHandle -ne 0 } | ForEach-Object { $null = $_.CloseMainWindow() }
+  Start-Sleep -Seconds 2
+  Get-Process Codex -ErrorAction SilentlyContinue | Where-Object { $_.Path -match 'OpenAI\.Codex' } | Stop-Process -Force -ErrorAction SilentlyContinue
+  for ($i = 0; $i -lt 10; $i++) {
+    if (-not (Get-Process Codex -ErrorAction SilentlyContinue | Where-Object { $_.Path -match 'OpenAI\.Codex' })) { break }
+    Start-Sleep -Milliseconds 500
+  }
+  Write-Host "[ok] app fermee" -ForegroundColor Green
+}
+
 # Verifications de base
 if (-not (Test-Path $CONFIG)) {
   Write-Host "[!] config.toml introuvable : $CONFIG" -ForegroundColor Red
@@ -299,8 +316,8 @@ function Launch-App([string]$model, [string]$provider, [bool]$needProxy, [bool]$
   # --- Compte OpenAI : on bascule sur le home par defaut ~/.codex et on N'Y TOUCHE PAS ---
   if ($provider -eq 'openai') {
     Set-CodexHome $OPENAI_HOME
+    Close-CodexApp   # l'app ne lit CODEX_HOME qu'au demarrage — on ferme l'instance ouverte
     Write-Host "[go] Codex sur ton COMPTE OpenAI (home ~/.codex, config intacte)..." -ForegroundColor Cyan
-    Write-Host "    (ferme l'app si elle etait ouverte, puis relance pour appliquer le home)" -ForegroundColor DarkGray
     Start-Process "shell:AppsFolder\$AUMID"
     return
   }
@@ -316,8 +333,8 @@ function Launch-App([string]$model, [string]$provider, [bool]$needProxy, [bool]$
     Stop-Proxy                    # force LiteLLM a recharger la nouvelle config
     Ensure-Proxy
   }
+  Close-CodexApp   # l'app ne lit CODEX_HOME qu'au demarrage — on ferme l'instance ouverte
   Write-Host "[go] demarrage de l'application Codex (GRATUIT) sur '$model'..." -ForegroundColor Cyan
-  Write-Host "    (si l'app etait deja ouverte, ferme-la et relance pour appliquer)" -ForegroundColor DarkGray
   Start-Process "shell:AppsFolder\$AUMID"
 }
 
