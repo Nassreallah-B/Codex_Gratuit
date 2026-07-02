@@ -196,11 +196,13 @@ function Update-LiteLLMConfig([string]$menuModel) {
   if ($wcThinkDS) { $wc.Add('      reasoning_effort: high'); $wc.Add('      extra_body: {"thinking": {"type": "enabled"}}') }
   $wcParams = $wc -join "`n"
 
-  # contextes reels : DeepSeek 1M, NVIDIA/HF 256k — exposes via model_info pour que
-  # Codex les recoive quand il interroge /v1/models (sinon defaut 65536 -> compact 62000).
-  $dsInfo = "      model_info:`n        context_window: 1048576`n        max_context_window: 1048576"
-  $nvInfo = "      model_info:`n        context_window: 262144`n        max_context_window: 262144"
-  $hfInfo = "      model_info:`n        context_window: 262144`n        max_context_window: 262144"
+  # contextes reels : DeepSeek direct 1M, NVIDIA DeepSeek 1M, NVIDIA GLM-5.1 200k, HF/Qwen 256k.
+  # model_info doit etre FRERE de litellm_params (indent 4) — imbrique dedans, LiteLLM l'ignore.
+  # Codex lit surtout le catalogue scoped litellm-models.json ; ceci aligne /model/info dessus.
+  $dsInfo = "    model_info:`n      context_window: 1048576`n      max_context_window: 1048576"
+  $nvDsInfo = "    model_info:`n      context_window: 1048576`n      max_context_window: 1048576"
+  $glmInfo = "    model_info:`n      context_window: 200000`n      max_context_window: 200000"
+  $hfInfo = "    model_info:`n      context_window: 262144`n      max_context_window: 262144"
 
   $yaml = @"
 # LiteLLM proxy — pont API Responses (Codex) -> chat/completions (DeepSeek/NVIDIA/HF)
@@ -231,7 +233,7 @@ $dsInfo
       api_key: os.environ/NVIDIA_API_KEY_DEEPSEEK
       use_chat_completions_api: true
       extra_body: {"chat_template_kwargs": {"thinking": false}}
-$nvInfo
+$nvDsInfo
 
   - model_name: nvidia-glm
     litellm_params:
@@ -239,7 +241,7 @@ $nvInfo
       api_base: https://integrate.api.nvidia.com/v1
       api_key: os.environ/NVIDIA_API_KEY_GLM
       use_chat_completions_api: true
-$nvInfo
+$glmInfo
 
   - model_name: hf
     litellm_params:
